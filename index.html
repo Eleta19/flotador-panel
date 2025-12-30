@@ -3,49 +3,76 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Flotador Remoto (MQTT)</title>
+  <title>Flotador Inteligente (Remoto)</title>
   <style>
-    body { font-family: Arial, sans-serif; padding: 16px; max-width: 720px; margin: 0 auto; }
-    .row { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0; }
-    button { padding: 10px 12px; cursor: pointer; }
-    pre { background:#f5f5f5; padding:12px; overflow:auto; }
-    .ok { color: #0a7; }
-    .bad { color: #b00; }
+    :root { --bg:#0f172a; --card:#111827; --muted:#94a3b8; --ok:#22c55e; --warn:#facc15; --bad:#ef4444; --primary:#38bdf8; }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu;background:linear-gradient(180deg,#020617,var(--bg));color:#e5e7eb;padding:16px}
+    .container{max-width:820px;margin:auto}
+    h1{margin:0 0 4px;font-size:1.8rem}
+    .subtitle{color:var(--muted);margin:0 0 16px}
+    .card{background:var(--card);border-radius:14px;padding:16px;margin-bottom:16px;box-shadow:0 10px 30px rgba(0,0,0,.4)}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+    .item{background:#020617;padding:12px;border-radius:10px}
+    .label{font-size:.75rem;color:var(--muted);margin-bottom:4px}
+    .value{font-size:1.05rem;font-weight:650}
+    .ok{color:var(--ok)} .warn{color:var(--warn)} .bad{color:var(--bad)}
+    .buttons{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-top:10px}
+    button{background:#020617;border:1px solid #1e293b;color:#e5e7eb;padding:12px;font-size:.95rem;border-radius:10px;cursor:pointer;transition:.15s}
+    button:hover{border-color:var(--primary);transform:translateY(-1px)}
+    button.primary{background:var(--primary);color:#020617;border:none;font-weight:700}
+    button.danger{background:var(--bad);border:none;color:white;font-weight:700}
+    pre{background:#020617;border-radius:10px;padding:12px;overflow:auto;font-size:.8rem;color:#cbd5f5}
   </style>
 </head>
 <body>
-  <h2>Panel remoto (MQTT)</h2>
+  <div class="container">
+    <h1>Flotador Inteligente</h1>
+    <div class="subtitle">Panel remoto por MQTT (HiveMQ Cloud)</div>
 
-  <p>
-    Estado conexión: <b id="conn" class="bad">Desconectado</b>
-  </p>
+    <div class="card">
+      <div class="grid">
+        <div class="item"><div class="label">Conexión</div><div class="value bad" id="conn">Desconectado</div></div>
+        <div class="item"><div class="label">WiFi (ESP32)</div><div class="value" id="wifi">–</div></div>
+        <div class="item"><div class="label">Modo</div><div class="value" id="mode">–</div></div>
+        <div class="item"><div class="label">Flotador</div><div class="value" id="floater">–</div></div>
+        <div class="item"><div class="label">Relé</div><div class="value" id="relay">–</div></div>
+        <div class="item"><div class="label">Fail-safe</div><div class="value" id="failsafe">–</div></div>
+      </div>
+    </div>
 
-  <div class="row">
-    <button onclick="sendCmd({mode:'AUTO'})">AUTO</button>
-    <button onclick="sendCmd({mode:'MANUAL'})">MANUAL</button>
-    <button onclick="sendCmd({mode:'MANUAL', relay:'ON'})">ON</button>
-    <button onclick="sendCmd({mode:'MANUAL', relay:'OFF'})">OFF</button>
+    <div class="card">
+      <div class="label">Acciones</div>
+      <div class="buttons">
+        <button class="primary" onclick="sendCmd({mode:'AUTO'})">AUTO</button>
+        <button onclick="sendCmd({mode:'MANUAL'})">MANUAL</button>
+        <button class="primary" onclick="sendCmd({mode:'MANUAL', relay:'ON'})">ENCENDER</button>
+        <button class="danger" onclick="sendCmd({mode:'MANUAL', relay:'OFF'})">APAGAR</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="label">Último status recibido</div>
+      <pre id="raw">{}</pre>
+    </div>
   </div>
 
-  <h3>Último status recibido</h3>
-  <pre id="status">{}</pre>
-
-  <!-- MQTT.js desde CDN -->
+  <!-- MQTT.js (browser) -->
   <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
   <script>
-    // ====== CONFIG HiveMQ Cloud ======
+    // ====== HIVE MQ CLOUD (WSS) ======
     const host = "e326139c9d754679a631bcf499d494f9.s1.eu.hivemq.cloud";
-    const url  = `wss://${host}:8884/mqtt`;   // HiveMQ Cloud WebSocket TLS (8884)
-    const username = "TU_USUARIO";
-    const password = "TU_PASSWORD";
+    const url  = `wss://${host}:8884/mqtt`; // WebSockets TLS port 8884 :contentReference[oaicite:2]{index=2}
+
+    // CREDENCIALES (usuario web)
+    const username = "web_panel";     // <-- cambia
+    const password = "Many1119";   // <-- cambia
 
     // Topics
     const TOPIC_CMD    = "flotador/esp32/cmd";
     const TOPIC_STATUS = "flotador/esp32/status";
 
-    const connEl = document.getElementById("conn");
-    const statusEl = document.getElementById("status");
-
+    const el = (id) => document.getElementById(id);
     const clientId = "web_" + Math.random().toString(16).slice(2);
 
     const client = mqtt.connect(url, {
@@ -58,33 +85,43 @@
     });
 
     client.on("connect", () => {
-      connEl.textContent = "Conectado";
-      connEl.className = "ok";
+      el("conn").textContent = "Conectado";
+      el("conn").className = "value ok";
       client.subscribe(TOPIC_STATUS, { qos: 0 });
     });
 
     client.on("reconnect", () => {
-      connEl.textContent = "Reconectando...";
-      connEl.className = "bad";
+      el("conn").textContent = "Reconectando...";
+      el("conn").className = "value warn";
     });
 
     client.on("close", () => {
-      connEl.textContent = "Desconectado";
-      connEl.className = "bad";
-    });
-
-    client.on("error", (err) => {
-      console.log("MQTT error:", err);
+      el("conn").textContent = "Desconectado";
+      el("conn").className = "value bad";
     });
 
     client.on("message", (topic, payload) => {
-      if (topic === TOPIC_STATUS) {
-        try {
-          const msg = JSON.parse(payload.toString());
-          statusEl.textContent = JSON.stringify(msg, null, 2);
-        } catch {
-          statusEl.textContent = payload.toString();
-        }
+      if (topic !== TOPIC_STATUS) return;
+      const text = payload.toString();
+      el("raw").textContent = text;
+
+      try {
+        const d = JSON.parse(text);
+        el("wifi").textContent = d.wifi ? "Conectado" : "Desconectado";
+        el("wifi").className = "value " + (d.wifi ? "ok" : "bad");
+
+        el("mode").textContent = d.mode ?? "–";
+        el("floater").textContent = d.floater ?? "–";
+
+        // En tu status mandas lastSent como número: 1/0/-1
+        const relayTxt = (d.lastSent === 1) ? "ON" : (d.lastSent === 0) ? "OFF" : "N/A";
+        el("relay").textContent = relayTxt;
+
+        const fs = !!d.failsafe;
+        el("failsafe").textContent = fs ? "Activo" : "OK";
+        el("failsafe").className = "value " + (fs ? "warn" : "ok");
+      } catch {
+        // si llega texto no JSON, igual lo mostramos en raw
       }
     });
 
