@@ -8,31 +8,46 @@
     :root { --bg:#0f172a; --card:#111827; --muted:#94a3b8; --ok:#22c55e; --warn:#facc15; --bad:#ef4444; --primary:#38bdf8; }
     *{box-sizing:border-box}
     body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu;background:linear-gradient(180deg,#020617,var(--bg));color:#e5e7eb;padding:16px}
-    .container{max-width:820px;margin:auto}
+    .container{max-width:900px;margin:auto}
     h1{margin:0 0 4px;font-size:1.8rem}
-    .subtitle{color:var(--muted);margin:0 0 16px}
+    .subtitle{color:var(--muted);margin:0 0 16px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
     .card{background:var(--card);border-radius:14px;padding:16px;margin-bottom:16px;box-shadow:0 10px 30px rgba(0,0,0,.4)}
     .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
     .item{background:#020617;padding:12px;border-radius:10px}
     .label{font-size:.75rem;color:var(--muted);margin-bottom:4px}
     .value{font-size:1.05rem;font-weight:650}
     .ok{color:var(--ok)} .warn{color:var(--warn)} .bad{color:var(--bad)}
-    .buttons{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-top:10px}
+    .buttons{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-top:10px}
     button{background:#020617;border:1px solid #1e293b;color:#e5e7eb;padding:12px;font-size:.95rem;border-radius:10px;cursor:pointer;transition:.15s}
     button:hover{border-color:var(--primary);transform:translateY(-1px)}
     button.primary{background:var(--primary);color:#020617;border:none;font-weight:700}
     button.danger{background:var(--bad);border:none;color:white;font-weight:700}
-    pre{background:#020617;border-radius:10px;padding:12px;overflow:auto;font-size:.8rem;color:#cbd5f5}
+    button.ghost{background:transparent;border:1px solid #334155;color:#e5e7eb}
+    pre{background:#020617;border-radius:10px;padding:12px;overflow:auto;font-size:.8rem;color:#cbd5f5;margin:0}
+    .top-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .pill{display:inline-flex;align-items:center;gap:8px;padding:8px 10px;border-radius:999px;background:#020617;border:1px solid #1e293b}
+    .dot{width:10px;height:10px;border-radius:999px;background:var(--bad)}
+    .dot.ok{background:var(--ok)} .dot.warn{background:var(--warn)} .dot.bad{background:var(--bad)}
   </style>
 </head>
 <body>
   <div class="container">
     <h1>Flotador Inteligente</h1>
-    <div class="subtitle">Panel remoto por MQTT (HiveMQ Cloud)</div>
+
+    <div class="subtitle">
+      <div>Panel remoto por MQTT (HiveMQ Cloud)</div>
+      <div class="top-actions">
+        <span class="pill">
+          <span id="dot" class="dot bad"></span>
+          <span id="connText">Desconectado</span>
+        </span>
+        <button class="ghost" onclick="logout()">Salir</button>
+      </div>
+    </div>
 
     <div class="card">
       <div class="grid">
-        <div class="item"><div class="label">Conexión</div><div class="value bad" id="conn">Desconectado</div></div>
+        <div class="item"><div class="label">Conexión</div><div class="value" id="conn">–</div></div>
         <div class="item"><div class="label">WiFi (ESP32)</div><div class="value" id="wifi">–</div></div>
         <div class="item"><div class="label">Modo</div><div class="value" id="mode">–</div></div>
         <div class="item"><div class="label">Flotador</div><div class="value" id="floater">–</div></div>
@@ -57,22 +72,62 @@
     </div>
   </div>
 
-  <!-- MQTT.js (browser) -->
   <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
   <script>
-    // ====== HIVE MQ CLOUD (WSS) ======
+    // ====== CONFIG HIVE MQ CLOUD ======
     const host = "e326139c9d754679a631bcf499d494f9.s1.eu.hivemq.cloud";
-    const url  = `wss://${host}:8884/mqtt`; // WebSockets TLS port 8884 :contentReference[oaicite:2]{index=2}
+    const url  = `wss://${host}:8884/mqtt`; // WebSockets TLS
 
-    // CREDENCIALES (usuario web)
-    const username = "web_panel";     // <-- cambia
-    const password = "Many1119";   // <-- cambia
-
-    // Topics
+    // Topics (en B los haremos "secretos")
     const TOPIC_CMD    = "flotador/esp32/cmd";
     const TOPIC_STATUS = "flotador/esp32/status";
 
+    // ====== Credenciales por sesión (Punto A) ======
+    function getCreds() {
+      const saved = sessionStorage.getItem("mqttCreds");
+      if (saved) return JSON.parse(saved);
+
+      const u = prompt("Usuario MQTT (HiveMQ):");
+      const p = prompt("Contraseña MQTT (HiveMQ):");
+      if (!u || !p) {
+        alert("Necesitas usuario y contraseña para conectar.");
+        throw new Error("Credenciales vacías");
+      }
+      const creds = { u, p };
+      sessionStorage.setItem("mqttCreds", JSON.stringify(creds));
+      return creds;
+    }
+
+    function logout() {
+      sessionStorage.removeItem("mqttCreds");
+      // opcional: refrescar para que vuelva a pedir credenciales
+      location.reload();
+    }
+
+    const { u: username, p: password } = getCreds();
+
     const el = (id) => document.getElementById(id);
+
+    function setConn(state) {
+      // state: "ok" | "warn" | "bad"
+      const dot = el("dot");
+      dot.className = "dot " + state;
+
+      if (state === "ok") {
+        el("connText").textContent = "Conectado";
+        el("conn").textContent = "Conectado";
+        el("conn").className = "value ok";
+      } else if (state === "warn") {
+        el("connText").textContent = "Reconectando...";
+        el("conn").textContent = "Reconectando...";
+        el("conn").className = "value warn";
+      } else {
+        el("connText").textContent = "Desconectado";
+        el("conn").textContent = "Desconectado";
+        el("conn").className = "value bad";
+      }
+    }
+
     const clientId = "web_" + Math.random().toString(16).slice(2);
 
     const client = mqtt.connect(url, {
@@ -85,23 +140,18 @@
     });
 
     client.on("connect", () => {
-      el("conn").textContent = "Conectado";
-      el("conn").className = "value ok";
+      setConn("ok");
       client.subscribe(TOPIC_STATUS, { qos: 0 });
     });
 
-    client.on("reconnect", () => {
-      el("conn").textContent = "Reconectando...";
-      el("conn").className = "value warn";
-    });
-
-    client.on("close", () => {
-      el("conn").textContent = "Desconectado";
-      el("conn").className = "value bad";
-    });
+    client.on("reconnect", () => setConn("warn"));
+    client.on("close", () => setConn("bad"));
+    client.on("offline", () => setConn("bad"));
+    client.on("error", (err) => console.log("MQTT error:", err));
 
     client.on("message", (topic, payload) => {
       if (topic !== TOPIC_STATUS) return;
+
       const text = payload.toString();
       el("raw").textContent = text;
 
@@ -113,7 +163,7 @@
         el("mode").textContent = d.mode ?? "–";
         el("floater").textContent = d.floater ?? "–";
 
-        // En tu status mandas lastSent como número: 1/0/-1
+        // lastSent puede ser 1/0/-1
         const relayTxt = (d.lastSent === 1) ? "ON" : (d.lastSent === 0) ? "OFF" : "N/A";
         el("relay").textContent = relayTxt;
 
@@ -121,7 +171,7 @@
         el("failsafe").textContent = fs ? "Activo" : "OK";
         el("failsafe").className = "value " + (fs ? "warn" : "ok");
       } catch {
-        // si llega texto no JSON, igual lo mostramos en raw
+        // Si no es JSON, igual lo mostramos en raw
       }
     });
 
@@ -129,6 +179,9 @@
       const msg = JSON.stringify(obj);
       client.publish(TOPIC_CMD, msg, { qos: 0, retain: false });
     }
+
+    // estado inicial
+    setConn("bad");
   </script>
 </body>
 </html>
