@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Flotador Remoto (MQTT)</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 16px; max-width: 720px; margin: 0 auto; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0; }
+    button { padding: 10px 12px; cursor: pointer; }
+    pre { background:#f5f5f5; padding:12px; overflow:auto; }
+    .ok { color: #0a7; }
+    .bad { color: #b00; }
+  </style>
+</head>
+<body>
+  <h2>Panel remoto (MQTT)</h2>
+
+  <p>
+    Estado conexión: <b id="conn" class="bad">Desconectado</b>
+  </p>
+
+  <div class="row">
+    <button onclick="sendCmd({mode:'AUTO'})">AUTO</button>
+    <button onclick="sendCmd({mode:'MANUAL'})">MANUAL</button>
+    <button onclick="sendCmd({mode:'MANUAL', relay:'ON'})">ON</button>
+    <button onclick="sendCmd({mode:'MANUAL', relay:'OFF'})">OFF</button>
+  </div>
+
+  <h3>Último status recibido</h3>
+  <pre id="status">{}</pre>
+
+  <!-- MQTT.js desde CDN -->
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <script>
+    // ====== CONFIG HiveMQ Cloud ======
+    const host = "e326139c9d754679a631bcf499d494f9.s1.eu.hivemq.cloud";
+    const url  = `wss://${host}:8884/mqtt`;   // HiveMQ Cloud WebSocket TLS (8884)
+    const username = "TU_USUARIO";
+    const password = "TU_PASSWORD";
+
+    // Topics
+    const TOPIC_CMD    = "flotador/esp32/cmd";
+    const TOPIC_STATUS = "flotador/esp32/status";
+
+    const connEl = document.getElementById("conn");
+    const statusEl = document.getElementById("status");
+
+    const clientId = "web_" + Math.random().toString(16).slice(2);
+
+    const client = mqtt.connect(url, {
+      clientId,
+      username,
+      password,
+      clean: true,
+      connectTimeout: 8000,
+      reconnectPeriod: 2000
+    });
+
+    client.on("connect", () => {
+      connEl.textContent = "Conectado";
+      connEl.className = "ok";
+      client.subscribe(TOPIC_STATUS, { qos: 0 });
+    });
+
+    client.on("reconnect", () => {
+      connEl.textContent = "Reconectando...";
+      connEl.className = "bad";
+    });
+
+    client.on("close", () => {
+      connEl.textContent = "Desconectado";
+      connEl.className = "bad";
+    });
+
+    client.on("error", (err) => {
+      console.log("MQTT error:", err);
+    });
+
+    client.on("message", (topic, payload) => {
+      if (topic === TOPIC_STATUS) {
+        try {
+          const msg = JSON.parse(payload.toString());
+          statusEl.textContent = JSON.stringify(msg, null, 2);
+        } catch {
+          statusEl.textContent = payload.toString();
+        }
+      }
+    });
+
+    function sendCmd(obj) {
+      const msg = JSON.stringify(obj);
+      client.publish(TOPIC_CMD, msg, { qos: 0, retain: false });
+    }
+  </script>
+</body>
+</html>
