@@ -23,11 +23,17 @@
     button.primary{background:var(--primary);color:#020617;border:none;font-weight:700}
     button.danger{background:var(--bad);border:none;color:white;font-weight:700}
     button.ghost{background:transparent;border:1px solid #334155;color:#e5e7eb}
+    button:disabled{opacity:.35;cursor:not-allowed;transform:none;border-color:#1e293b}
     pre{background:#020617;border-radius:10px;padding:12px;overflow:auto;font-size:.8rem;color:#cbd5f5;margin:0}
     .top-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
     .pill{display:inline-flex;align-items:center;gap:8px;padding:8px 10px;border-radius:999px;background:#020617;border:1px solid #1e293b}
     .dot{width:10px;height:10px;border-radius:999px;background:var(--bad)}
     .dot.ok{background:var(--ok)} .dot.warn{background:var(--warn)} .dot.bad{background:var(--bad)}
+
+    /* ===== contador ===== */
+    .pill.hidden{display:none}
+    @keyframes pulse { 0%{transform:scale(1)} 50%{transform:scale(1.08)} 100%{transform:scale(1)} }
+    .pulse{animation:pulse .6s infinite}
   </style>
 </head>
 <body>
@@ -49,7 +55,19 @@
       <div class="grid">
         <div class="item"><div class="label">Conexión</div><div class="value" id="conn">–</div></div>
         <div class="item"><div class="label">WiFi (ESP32)</div><div class="value" id="wifi">–</div></div>
-        <div class="item"><div class="label">Modo</div><div class="value" id="mode">–</div></div>
+
+        <div class="item">
+          <div class="label" style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+            <span>Modo</span>
+            <span id="manualPill" class="pill hidden" title="Regresa a AUTO automáticamente">
+              <span id="manualDot" class="dot"></span>
+              <span>MANUAL:</span>
+              <span id="manualCountdown">02:00</span>
+            </span>
+          </div>
+          <div class="value" id="mode">–</div>
+        </div>
+
         <div class="item"><div class="label">Flotador</div><div class="value" id="floater">–</div></div>
         <div class="item"><div class="label">Relé</div><div class="value" id="relay">–</div></div>
         <div class="item"><div class="label">Fail-safe</div><div class="value" id="failsafe">–</div></div>
@@ -61,8 +79,8 @@
       <div class="buttons">
         <button class="primary" onclick="sendCmd({mode:'AUTO'})">AUTO</button>
         <button onclick="sendCmd({mode:'MANUAL'})">MANUAL</button>
-        <button class="primary" onclick="sendCmd({mode:'MANUAL', relay:'ON'})">ENCENDER</button>
-        <button class="danger" onclick="sendCmd({mode:'MANUAL', relay:'OFF'})">APAGAR</button>
+        <button id="btnOn" class="primary" onclick="sendCmd({mode:'MANUAL', relay:'ON'})">ENCENDER</button>
+        <button id="btnOff" class="danger" onclick="sendCmd({mode:'MANUAL', relay:'OFF'})">APAGAR</button>
       </div>
     </div>
 
@@ -78,9 +96,15 @@
     const host = "e326139c9d754679a631bcf499d494f9.s1.eu.hivemq.cloud";
     const url  = `wss://${host}:8884/mqtt`; // WebSockets TLS
 
-    // Topics (en B los haremos "secretos")
     const TOPIC_CMD    = "flotador/9xQ7Kp2A7FvM/cmd";
     const TOPIC_STATUS = "flotador/9xQ7Kp2A7FvM/status";
+
+    // ===== contador (UI) =====
+    const MANUAL_TIMEOUT_MS = 2 * 60 * 1000; // 2 min
+    const ALERT_LAST_SECONDS = 10;
+
+    let manualUntil = null; // timestamp ms
+    let lastMode = null;
 
     // ====== Credenciales por sesión (Punto A) ======
     function getCreds() {
@@ -100,7 +124,6 @@
 
     function logout() {
       sessionStorage.removeItem("mqttCreds");
-      // opcional: refrescar para que vuelva a pedir credenciales
       location.reload();
     }
 
@@ -109,7 +132,6 @@
     const el = (id) => document.getElementById(id);
 
     function setConn(state) {
-      // state: "ok" | "warn" | "bad"
       const dot = el("dot");
       dot.className = "dot " + state;
 
@@ -126,6 +148,53 @@
         el("conn").textContent = "Desconectado";
         el("conn").className = "value bad";
       }
+    }
+
+    function fmtMMSS(msLeft) {
+      const totalSec = Math.max(0, Math.ceil(msLeft / 1000));
+      const mm = String(Math.floor(totalSec / 60)).padStart(2, "0");
+      const ss = String(totalSec % 60).padStart(2, "0");
+      return `${mm}:${ss}`;
+    }
+
+    function setManualUI(enabled) {
+      const pill = el("manualPill");
+      if (!enabled) {
+        pill.classList.add("hidden");
+        el("manualDot").className = "dot";
+        el("manualCountdown").classList.remove("pulse");
+        return;
+      }
+      pill.classList.remove("hidden");
+    }
+
+    function updateManualCountdown() {
+      if (!manualUntil) return;
+      const left = manualUntil - Date.now();
+
+      el("manualCountdown").textContent = fmtMMSS(left);
+
+      const dot = el("manualDot");
+      const countdown = el("manualCountdown");
+
+      if (left <= ALERT_LAST_SECONDS * 1000 && left > 0) {
+        dot.className = "dot warn";
+        countdown.classList.add("pulse");
+      } else if (left <= 0) {
+        dot.className = "dot bad";
+        countdown.classList.remove("pulse");
+        manualUntil = null;
+        setManualUI(false);
+      } else {
+        dot.className = "dot";
+        countdown.classList.remove("pulse");
+      }
+    }
+
+    function applyManualButtonRules(mode) {
+      const isManual = (mode === "MANUAL");
+      el("btnOn").disabled = !isManual;
+      el("btnOff").disabled = !isManual;
     }
 
     const clientId = "web_" + Math.random().toString(16).slice(2);
@@ -157,14 +226,34 @@
 
       try {
         const d = JSON.parse(text);
+
         el("wifi").textContent = d.wifi ? "Conectado" : "Desconectado";
         el("wifi").className = "value " + (d.wifi ? "ok" : "bad");
 
-        el("mode").textContent = d.mode ?? "–";
+        const mode = d.mode ?? "–";
+        el("mode").textContent = mode;
+
+        // ✅ reglas UI ON/OFF
+        applyManualButtonRules(mode);
+
+        // ✅ contador (cuando entra a MANUAL)
+        if (mode !== lastMode) {
+          lastMode = mode;
+          if (mode === "MANUAL") {
+            manualUntil = Date.now() + MANUAL_TIMEOUT_MS;
+            setManualUI(true);
+            updateManualCountdown();
+          } else {
+            manualUntil = null;
+            setManualUI(false);
+          }
+        }
+
         el("floater").textContent = d.floater ?? "–";
 
-        // lastSent puede ser 1/0/-1
-        const relayTxt = (d.lastSent === 1) ? "ON" : (d.lastSent === 0) ? "OFF" : "N/A";
+        // Tu status publica "relay" (no lastSent)
+        const relayVal = (d.relay !== undefined) ? d.relay : d.lastSent;
+        const relayTxt = (relayVal === 1) ? "ON" : (relayVal === 0) ? "OFF" : "N/A";
         el("relay").textContent = relayTxt;
 
         const fs = !!d.failsafe;
@@ -176,13 +265,25 @@
     });
 
     function sendCmd(obj) {
+      // UX: si el usuario presiona MANUAL o usa ON/OFF, reiniciamos contador UI
+      if (obj.mode === "MANUAL" || obj.relay === "ON" || obj.relay === "OFF") {
+        manualUntil = Date.now() + MANUAL_TIMEOUT_MS;
+        setManualUI(true);
+        updateManualCountdown();
+      }
+      if (obj.mode === "AUTO") {
+        manualUntil = null;
+        setManualUI(false);
+      }
+
       const msg = JSON.stringify(obj);
       client.publish(TOPIC_CMD, msg, { qos: 0, retain: false });
     }
 
     // estado inicial
     setConn("bad");
+    applyManualButtonRules("AUTO");
+    setInterval(updateManualCountdown, 250);
   </script>
 </body>
 </html>
-
